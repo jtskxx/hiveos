@@ -66,63 +66,36 @@ process_user_config() {
             if [[ ! -z "$value" ]]; then
                 if [[ "$param" == "overwrites" || "$param" == "trainer" ]]; then
                     Settings=$(jq -s '.[0] * .[1]' <<< "$Settings {$line}")
-                    SettingsGpu=$(jq -s '.[0] * .[1]' <<< "$SettingsGpu {$line}")
                 elif [[ "$param" == "Idling" ]]; then
-                    gpuOnly=$(jq -r '.gpuOnly // empty' <<< "$value")
-                    if [[ "$gpuOnly" == "true" ]]; then
-                        value=$(jq 'del(.gpuOnly)' <<< "$value")
-                        SettingsGpu=$(jq --argjson Idling "$value" '
-                            .Idling = $Idling | 
-                            .Idling.preCommand = ($Idling.preCommand // null) |
-                            .Idling.preCommandArguments = ($Idling.preCommandArguments // null) |
-                            .Idling.command = ($Idling.command // null) |
-                            .Idling.arguments = ($Idling.arguments // null) |
-                            .Idling.postCommand = ($Idling.postCommand // null) |
-                            .Idling.postCommandArguments = ($Idling.postCommandArguments // null)
-                        ' <<< "$SettingsGpu")
-                    else
-                        Settings=$(jq --argjson Idling "$value" '
-                            .Idling = $Idling | 
-                            .Idling.preCommand = ($Idling.preCommand // null) |
-                            .Idling.preCommandArguments = ($Idling.preCommandArguments // null) |
-                            .Idling.command = ($Idling.command // null) |
-                            .Idling.arguments = ($Idling.arguments // null) |
-                            .Idling.postCommand = ($Idling.postCommand // null) |
-                            .Idling.postCommandArguments = ($Idling.postCommandArguments // null)
-                        ' <<< "$Settings")
-                    fi
+                    Settings=$(jq --argjson Idling "$value" '
+                        .Idling = $Idling | 
+                        .Idling.preCommand = ($Idling.preCommand // null) |
+                        .Idling.preCommandArguments = ($Idling.preCommandArguments // null) |
+                        .Idling.command = ($Idling.command // null) |
+                        .Idling.arguments = ($Idling.arguments // null) |
+                        .Idling.postCommand = ($Idling.postCommand // null) |
+                        .Idling.postCommandArguments = ($Idling.postCommandArguments // null)
+                    ' <<< "$Settings")
                 elif [[ "$param" == "accessToken" ]]; then
                     value=$(echo "$value" | sed 's/^"//;s/"$//')
                     Settings=$(jq --arg value "$value" '.accessToken = $value' <<< "$Settings")
-                    SettingsGpu=$(jq --arg value "$value" '.accessToken = $value' <<< "$SettingsGpu")
-                elif [[ "$param" == "pps" ]]; then
+                elif [[ "$param" == "pps" || "$param" == "useLiveConnection" ]]; then
                     if [[ "$value" == "true" || "$value" == "false" ]]; then
-                        Settings=$(jq --argjson value "$value" '.pps = $value' <<< "$Settings")
-                        SettingsGpu=$(jq --argjson value "$value" '.pps = $value' <<< "$SettingsGpu")
+                        Settings=$(jq --argjson value "$value" '.[$param] = $value' <<< "$Settings")
                     else
-                        echo "Invalid value for pps: $value. It must be 'true' or 'false'. Skipping this entry."
-                    fi
-                elif [[ "$param" == "useLiveConnection" ]]; then
-                    if [[ "$value" == "true" || "$value" == "false" ]]; then
-                        Settings=$(jq --argjson value "$value" '.useLiveConnection = $value' <<< "$Settings")
-                        SettingsGpu=$(jq --argjson value "$value" '.useLiveConnection = $value' <<< "$SettingsGpu")
-                    else
-                        echo "Invalid value for useLiveConnection: $value. It must be 'true' or 'false'. Skipping this entry."
+                        echo "Invalid value for $param: $value. It must be 'true' or 'false'. Skipping this entry."
                     fi
                 else
                     if [[ "$param" == "trainer.cpuThreads" ]]; then
                         Settings=$(jq --arg value "$value" '.trainer.cpuThreads = ($value | tonumber)' <<< "$Settings")
                     elif [[ "$param" == "trainer.gpu" ]]; then
-                        SettingsGpu=$(jq --argjson value "$value" '.trainer.gpu = $value' <<< "$SettingsGpu")
+                        Settings=$(jq --argjson value "$value" '.trainer.gpu = $value' <<< "$Settings")
                     elif [[ "$value" == "null" ]]; then
                         Settings=$(jq --arg param "$param" '.[$param] = null' <<< "$Settings")
-                        SettingsGpu=$(jq --arg param "$param" '.[$param] = null' <<< "$SettingsGpu")
                     elif [[ "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                         Settings=$(jq --arg param "$param" --argjson value "$value" '.[$param] = ($value | tonumber)' <<< "$Settings")
-                        SettingsGpu=$(jq --arg param "$param" --argjson value "$value" '.[$param] = ($value | tonumber)' <<< "$SettingsGpu")
                     else
                         Settings=$(jq --arg param "$param" --arg value "$value" '.[$param] = $value' <<< "$Settings")
-                        SettingsGpu=$(jq --arg param "$param" --arg value "$value" '.[$param] = $value' <<< "$SettingsGpu")
                     fi
                 fi
             fi
@@ -135,18 +108,15 @@ process_user_config() {
 # Processing global settings
 GlobalSettings=$(jq -r '.ClientSettings' "/hive/miners/custom/$CUSTOM_NAME/appsettings_global.json" | envsubst)
 
-# Initialize Settings and SettingsGpu
+# Initialize Settings
 Settings="$GlobalSettings"
-SettingsGpu="$GlobalSettings"
 
 # Delete old settings
-eval "rm -rf /hive/miners/custom/$CUSTOM_NAME/cpu/appsettings.json"
-eval "rm -rf /hive/miners/custom/$CUSTOM_NAME/gpu/appsettings.json"
+eval "rm -rf /hive/miners/custom/$CUSTOM_NAME/appsettings.json"
 
 # Processing the template (alias)
 if [[ ! -z $CUSTOM_TEMPLATE ]]; then
     Settings=$(jq --arg alias "$CUSTOM_TEMPLATE" '.alias = $alias' <<< "$Settings")
-    SettingsGpu=$(jq --arg alias "$CUSTOM_TEMPLATE" '.alias = $alias' <<< "$SettingsGpu")
 fi
 
 # Processing user configuration
@@ -155,7 +125,6 @@ fi
 # Adding poolAddress settings
 if [[ ! -z $CUSTOM_URL ]]; then
     Settings=$(jq --arg poolAddress "$CUSTOM_URL" '.poolAddress = $poolAddress' <<< "$Settings")
-    SettingsGpu=$(jq --arg poolAddress "$CUSTOM_URL" '.poolAddress = $poolAddress' <<< "$SettingsGpu")
 fi
 
 # Check and modify Settings for hugePages parameter
@@ -166,20 +135,16 @@ if [[ $(jq '.hugePages' <<< "$Settings") != null ]]; then
     fi
 fi
 
-# Check and create settings for CPU mining
-if [[ $(jq '.trainer.cpu == true' <<< "$Settings") == true ]]; then
-    Settings=$(jq '.alias |= . + "-cpu" | .trainer.gpu = false | .allowHwInfoCollect = false | del(.overwrites.CUDA)' <<< "$Settings")
-    # Set default cpuThreads to 0 if not specified
-    if [[ $(jq '.trainer.cpuThreads' <<< "$Settings") == null ]]; then
-        Settings=$(jq '.trainer.cpuThreads = 0' <<< "$Settings")
-    fi
-    echo "{\"ClientSettings\":$Settings}" | jq . > "/hive/miners/custom/$CUSTOM_NAME/cpu/appsettings.json"
-fi
+# Ensure trainer settings are properly set
+Settings=$(jq '
+    if .trainer == null then .trainer = {} else . end |
+    if .trainer.cpu == null then .trainer.cpu = false else . end |
+    if .trainer.gpu == null then .trainer.gpu = false else . end |
+    if .trainer.cpu == false and .trainer.gpu == false then .trainer.cpu = true else . end |
+    if .trainer.cpu == true and .trainer.cpuThreads == null then .trainer.cpuThreads = 0 else . end
+' <<< "$Settings")
 
-# Check and create settings for GPU mining
-if [[ $(jq '.trainer.gpu == true' <<< "$SettingsGpu") == true ]]; then
-    SettingsGpu=$(jq '.alias |= . + "-gpu" | .trainer.cpu = false | del(.trainer.cpuThreads) | del(.hugePages)' <<< "$SettingsGpu")
-    echo "{\"ClientSettings\":$SettingsGpu}" | jq . > "/hive/miners/custom/$CUSTOM_NAME/gpu/appsettings.json"
-fi
+# Create the final settings file
+echo "{\"ClientSettings\":$Settings}" | jq . > "/hive/miners/custom/$CUSTOM_NAME/appsettings.json"
 
 echo "Settings created successfully."
