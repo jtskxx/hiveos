@@ -8,40 +8,16 @@ log_head_name="${log_basename}_head.log"
 # Update the configuration file path
 conf_name="/hive/miners/custom/qubminer/appsettings.json"
 
-# Function to extract runner information
-get_runners() {
-    local log_start=$(head -n 100 "$log_name")
-    
-    local cpu_runner=$(echo "$log_start" | grep -Po "\[CPU\] Trainer: \K.*(?= is starting)" | head -n1)
-    local gpu_runner=$(echo "$log_start" | grep -Po "\[GPU\] Trainer: \K.*(?= is starting)" | head -n1)
-    local epoh_runner=$(echo "$log_start" | grep -Po "E:\d+" | tail -n1)
-    
-    echo "${gpu_runner}|${cpu_runner}|${epoh_runner}"
-}
-
 # Function to calculate the miner version
 get_miner_version() {
-    local custom_version="$1"
-    local runners="$2"
-    IFS='|' read -r gpu_runner cpu_runner epoh_runner <<< "$runners"
-
-    local ver=$(echo "${custom_version}" | sed 's/ *(.*)//g' | sed 's/[[:space:]]*$//')
-    [[ -n "${epoh_runner}" ]] && ver="${ver},${epoh_runner}"
-    
-    local runner_string=""
-    [[ -n "${gpu_runner}" ]] && runner_string+="${gpu_runner}"
-    [[ -n "${cpu_runner}" ]] && [[ -n "${runner_string}" ]] && runner_string+=","
-    [[ -n "${cpu_runner}" ]] && runner_string+="${cpu_runner}"
-    
-    [[ -n "${runner_string}" ]] && ver="${ver},${runner_string}"
-    
-    # Remove any extra spaces
-    ver=$(echo "$ver" | sed 's/ *,/,/g' | sed 's/, */,/g')
-    
+    local ver="${custom_version}"
+    [[ -n "${epoh_runner}" ]] && ver="${ver}, ${epoh_runner}"
+    [[ -n "${gpu_runner}" ]] && ver="${ver}, ${gpu_runner}"
+    [[ -n "${cpu_runner}" ]] && ver="${ver}, ${cpu_runner}"
     echo "$ver"
 }
 
-# Function to calculate miner uptime
+# Updated function to calculate miner uptime
 get_miner_uptime() {
     local uptime=0
     local log_time=$(stat --format='%Y' "$log_name")
@@ -88,24 +64,27 @@ get_last_valid_hashrate() {
     echo "$last_hashrate"
 }
 
-# Function to extract shares from a log line
+# Updated function to extract shares from a log line
 extract_shares() {
     local line="$1"
-    local shares=$(echo "$line" | grep -oP "SHARES: \K\d+/\d+ \(R:\d+\)")
+    local shares=$(echo "$line" | grep -oP "(SHARES|SOLS): \K\d+/\d+ \(R:\d+\)")
     local accepted=$(echo "$shares" | cut -d'/' -f2 | cut -d' ' -f1)
     local rejected=$(echo "$shares" | grep -oP "R:\K\d+")
     echo "$accepted $rejected"
 }
+
+# Extract version and runner information
+custom_version=$(grep -Po "(?<=Version ).*" "$log_name" | tail -n1)
+gpu_runner=$(grep -Po "(?<=Trainer: ).*(?= is starting)" "$log_name" | grep -i "cuda\|hip" | tail -n1)
+cpu_runner=$(grep -Po "(?<=Trainer: ).*(?= is starting)" "$log_name" | grep -i "cpu" | tail -n1)
+epoh_runner=$(grep -Po "E:\d+" "$log_name" | tail -n1)
 
 # Check if the log file is recent enough
 diffTime=$(get_log_time_diff)
 maxDelay=300
 
 if [ "$diffTime" -lt "$maxDelay" ]; then
-    custom_version=$(grep -Po "(?<=Version ).*" "$log_name" | tail -n1)
-    runners=$(get_runners)
-    ver=$(get_miner_version "$custom_version" "$runners")
-    
+    ver=$(get_miner_version)
     hs_units="hs"
     algo="qubic"
     uptime=$(get_miner_uptime)
@@ -135,7 +114,7 @@ if [ "$diffTime" -lt "$maxDelay" ]; then
     # Process GPU data
     if [[ $gpu_count -gt 0 ]]; then
         # Extract GPU shares information
-        gpu_shares=$(grep "\[CUDA\]" "$log_name" | grep "SHARES:" | tail -n 1)
+        gpu_shares=$(grep "\[CUDA\]" "$log_name" | grep -E "(SHARES|SOLS):" | tail -n 1)
         if [[ -n "$gpu_shares" ]]; then
             read gpu_accepted gpu_rejected <<< $(extract_shares "$gpu_shares")
             [[ -z "$gpu_accepted" ]] && gpu_accepted=0
@@ -168,7 +147,7 @@ if [ "$diffTime" -lt "$maxDelay" ]; then
     # Process CPU stats
     if [[ $cpu_count -eq 1 ]]; then
         # Extract CPU shares information
-        cpu_shares=$(grep -E "\[(AVX512|AVX2|GENERIC)\]" "$log_name" | grep "SHARES:" | tail -n 1)
+        cpu_shares=$(grep -E "\[(AVX512|AVX2|GENERIC)\]" "$log_name" | grep -E "(SHARES|SOLS):" | tail -n 1)
         if [[ -n "$cpu_shares" ]]; then
             read cpu_accepted cpu_rejected <<< $(extract_shares "$cpu_shares")
             [[ -z "$cpu_accepted" ]] && cpu_accepted=0
@@ -193,6 +172,7 @@ if [ "$diffTime" -lt "$maxDelay" ]; then
     # Calculate total GPU hashrate
     gpu_total_hs=$(tail -n 20 "$log_name" | grep -oP '\[CUDA\].*?(\d+) avg it/s' | tail -n 1 | grep -oP '\d+(?= avg it/s)')
     gpu_total_hs=${gpu_total_hs:-0} 
+    
 
     # Calculate total hashrate (GPU + CPU)
     total_hs=$(echo "$gpu_total_hs + $cpu_hs" | bc)
