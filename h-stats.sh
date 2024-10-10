@@ -75,8 +75,8 @@ extract_shares() {
 
 # Extract version and runner information
 custom_version=$(grep -Po "(?<=Version ).*" "$log_name" | tail -n1)
-gpu_runner=$(grep -Po "(?<=Trainer: ).*(?= is starting)" "$log_name" | grep -i "cuda\|hip" | tail -n1)
-cpu_runner=$(grep -Po "(?<=Trainer: ).*(?= is starting)" "$log_name" | grep -i "cpu" | tail -n1)
+gpu_runner=$(tac "$log_name" | grep -m1 -Po "(?<=Trainer: ).*?cuda.*?(?:\d+(?:\.\d+)*)(?= is (starting|running))")
+cpu_runner=$(tac "$log_name" | grep -m1 -Po "(?<=Trainer: ).*?cpu.*?(?:\d+(?:\.\d+)*)(?= is (starting|running))")
 epoh_runner=$(grep -Po "E:\d+" "$log_name" | tail -n1)
 
 # Check if the log file is recent enough
@@ -173,7 +173,6 @@ if [ "$diffTime" -lt "$maxDelay" ]; then
     gpu_total_hs=$(tail -n 20 "$log_name" | grep -oP '\[CUDA\].*?(\d+) avg it/s' | tail -n 1 | grep -oP '\d+(?= avg it/s)')
     gpu_total_hs=${gpu_total_hs:-0} 
     
-
     # Calculate total hashrate (GPU + CPU)
     total_hs=$(echo "$gpu_total_hs + $cpu_hs" | bc)
 
